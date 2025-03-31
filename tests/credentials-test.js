@@ -1,28 +1,46 @@
 const speech = require('@google-cloud/speech');
 const { VertexAI } = require('@google-cloud/vertexai');
 const path = require('path');
+const fs = require('fs');
 
 // Configurazione del percorso delle credenziali
-const credentialsPath = path.join(__dirname, '../Google/echolog-455210-0deaa070889f.json');
+const credentialsPath = path.join(__dirname, '../Google/gcloud-key.json');
 process.env.GOOGLE_APPLICATION_CREDENTIALS = credentialsPath;
 
-async function testSpeechToText() {
+async function testSpeechToText(audioFormat = 'wav') {
     try {
-        console.log('🎤 Test Speech-to-Text API...');
+        console.log(`🎤 Test Speech-to-Text API con file ${audioFormat.toUpperCase()}...`);
         const client = new speech.SpeechClient();
         
-        // Test con una richiesta minima
+        // Leggi il file audio di test
+        const testAudioPath = path.join(__dirname, `audio/test.${audioFormat}`);
+        const audioBytes = fs.readFileSync(testAudioPath).toString('base64');
+        
+        // Configura la richiesta
+        const audio = {
+            content: audioBytes
+        };
         const config = {
-            encoding: 'LINEAR16',
+            encoding: audioFormat === 'wav' ? 'LINEAR16' : 'MP4',
             sampleRateHertz: 16000,
             languageCode: 'it-IT',
+            enableAutomaticPunctuation: true,
+            model: 'latest_long'
         };
         
-        // Verifichiamo solo che il client sia configurato correttamente
-        console.log('✅ Speech-to-Text API: Client configurato correttamente');
-        return true;
+        console.log('📤 Invio richiesta di trascrizione...');
+        const [response] = await client.recognize({ audio, config });
+        
+        if (response.results && response.results.length > 0) {
+            console.log('✅ Trascrizione completata con successo');
+            console.log('📝 Testo trascritto:', response.results[0].alternatives[0].transcript);
+            return true;
+        } else {
+            console.log('⚠️ Nessun risultato nella trascrizione');
+            return false;
+        }
     } catch (error) {
-        console.error('❌ Speech-to-Text API Error:', error.message);
+        console.error(`❌ Speech-to-Text API Error (${audioFormat.toUpperCase()}):`, error.message);
         return false;
     }
 }
@@ -56,12 +74,18 @@ async function runTests() {
     console.log('🔑 Test Credenziali Google Cloud');
     console.log('================================');
     
-    const speechResult = await testSpeechToText();
+    // Test con WAV
+    const speechResultWav = await testSpeechToText('wav');
     console.log('--------------------------------');
+    
+    // Test con MP4
+    const speechResultMp4 = await testSpeechToText('mp3'); // Il file è in realtà MP4
+    console.log('--------------------------------');
+    
     const vertexResult = await testVertexAI();
     
     console.log('================================');
-    if (speechResult && vertexResult) {
+    if (speechResultWav && speechResultMp4 && vertexResult) {
         console.log('✨ Tutti i test completati con successo!');
     } else {
         console.log('⚠️ Alcuni test sono falliti. Controlla gli errori sopra.');
