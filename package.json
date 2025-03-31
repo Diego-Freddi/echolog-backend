@@ -16,6 +16,7 @@
   "description": "",
   "dependencies": {
     "@google-cloud/speech": "^7.0.1",
+    "@google-cloud/storage": "^7.15.2",
     "@google-cloud/vertexai": "^1.9.3",
     "@types/express": "^5.0.1",
     "@types/node": "^22.13.14",
