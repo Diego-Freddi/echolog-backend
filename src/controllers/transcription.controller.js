@@ -1,33 +1,24 @@
 const speech = require('@google-cloud/speech');
 const path = require('path');
 const fs = require('fs');
-const { uploadToGCS } = require('../utils/gcsUploader');
 
 // Inizializzazione del client Speech-to-Text
 const client = new speech.SpeechClient();
 
 /**
  * Configura le opzioni di base per la trascrizione
- * @param {Object} file - File audio
+ * @param {Object} options - Opzioni personalizzate (opzionale)
  * @returns {Object} Configurazione per Speech-to-Text
  */
-const getTranscriptionConfig = (file) => {
-  // Determina l'encoding in base al tipo di file
-  let encoding = 'MP3';
-  if (file.mimetype === 'audio/wav') {
-    encoding = 'LINEAR16';
-  }
-
-  return {
-    encoding: encoding,
-    sampleRateHertz: 44100,  // Cambiato da 16000 a 44100 per supportare file standard
-    languageCode: 'it-IT',
-    enableAutomaticPunctuation: true,
-    model: 'default',
-    useEnhanced: true,
-    enableWordTimeOffsets: true,
-  };
-};
+const getTranscriptionConfig = (options = {}) => ({
+  encoding: options.encoding || 'LINEAR16',
+  sampleRateHertz: options.sampleRateHertz || 16000,
+  languageCode: options.languageCode || 'it-IT',
+  enableAutomaticPunctuation: true,
+  model: 'default', // Usiamo il modello default per ora
+  useEnhanced: true,
+  enableWordTimeOffsets: true,
+});
 
 /**
  * Gestisce la trascrizione di un file audio
@@ -43,61 +34,52 @@ const transcribeAudio = async (req, res) => {
       });
     }
 
-    console.log('File ricevuto:', {
-      nome: req.file.originalname,
-      tipo: req.file.mimetype,
-      dimensione: req.file.size,
-      percorso: req.file.path
-    });
+    console.log('Inizio trascrizione per:', req.file.originalname);
 
-    // 1. Upload su GCS
-    const destinationFileName = `${Date.now()}-${req.file.originalname}`;
-    const gcsUri = await uploadToGCS(req.file.path, destinationFileName);
-    console.log('File caricato su GCS:', gcsUri);
+    // Leggi il file audio
+    const audioBytes = fs.readFileSync(req.file.path).toString('base64');
 
-    // 2. Prepara la richiesta per Speech-to-Text
-    const config = getTranscriptionConfig(req.file);
+    // Prepara la richiesta per Speech-to-Text
+    const audio = {
+      content: audioBytes,
+    };
+
+    const config = getTranscriptionConfig();
     const request = {
-      audio: { uri: gcsUri },
+      audio: audio,
       config: config,
     };
 
     console.log('Configurazione trascrizione:', {
       encoding: config.encoding,
       sampleRate: config.sampleRateHertz,
-      language: config.languageCode,
-      mimeType: req.file.mimetype,
-      gcsUri: gcsUri
+      language: config.languageCode
     });
 
-    // 3. Avvia la trascrizione
-    console.log('Avvio richiesta di trascrizione...');
+    // Avvia la trascrizione
     const [operation] = await client.longRunningRecognize(request);
     console.log('Trascrizione avviata, operationId:', operation.name);
 
-    // 4. Pulisci il file temporaneo locale
+    // Pulisci il file temporaneo
     fs.unlinkSync(req.file.path);
 
-    // 5. Restituisci l'operationId al client
+    // Restituisci l'operationId al client
     res.status(200).json({
       message: 'Trascrizione avviata con successo',
-      operationId: operation.name,
-      gcsUri: gcsUri
+      operationId: operation.name
     });
 
   } catch (error) {
-    console.error('Errore dettagliato durante la trascrizione:', error);
-    console.error('Stack trace:', error.stack);
+    console.error('Errore durante la trascrizione:', error);
 
     // Pulisci il file temporaneo in caso di errore
-    if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+    if (req.file && req.file.path) {
       fs.unlinkSync(req.file.path);
     }
 
     res.status(500).json({
       error: 'Errore durante la trascrizione',
-      details: error.message,
-      stack: error.stack
+      details: error.message
     });
   }
 };
@@ -141,7 +123,7 @@ const getTranscriptionStatus = async (req, res) => {
 
       const transcription = operation.result.results
         .map(result => result.alternatives[0].transcript)
-        .join('\n');
+        .join(' ');
 
       console.log('Trascrizione completata:', transcription);
       return res.status(200).json({
@@ -158,11 +140,9 @@ const getTranscriptionStatus = async (req, res) => {
 
   } catch (error) {
     console.error('Errore nel controllo stato trascrizione:', error);
-    console.error('Stack trace:', error.stack);
     res.status(500).json({
       error: 'Errore nel controllo stato trascrizione',
-      details: error.message,
-      stack: error.stack
+      details: error.message
     });
   }
 };
