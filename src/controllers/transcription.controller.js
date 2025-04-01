@@ -169,10 +169,16 @@ const getTranscriptionStatus = async (req, res) => {
         .map(result => result.alternatives[0].transcript)
         .join(' ');
 
+      // Genera un ID univoco per la trascrizione
+      const transcriptionId = `tr-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
       console.log('Trascrizione completata:', transcription);
+      console.log('ID trascrizione generato:', transcriptionId);
+      
       return res.status(200).json({
         status: 'completed',
-        transcription: transcription
+        transcription: transcription,
+        transcriptionId: transcriptionId
       });
     }
 
