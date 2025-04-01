@@ -8,6 +8,7 @@ require('dotenv').config();
 const authRoutes = require('./routes/auth.routes');
 const audioRoutes = require('./routes/audio.routes');
 const transcriptionRoutes = require('./routes/transcription.routes');
+const storageConfig = require('./config/storage.config');
 
 const app = express();
 
@@ -40,6 +41,13 @@ mongoose.connect(process.env.MONGODB_URI)
     .then(() => console.log('✅ Connesso a MongoDB'))
     .catch(err => console.error('❌ Errore connessione MongoDB:', err));
 
+// Inizializza Google Cloud Storage bucket se abilitato
+if (storageConfig.useCloudStorage) {
+  storageConfig.initBucket()
+    .then(() => console.log('✅ Google Cloud Storage inizializzato'))
+    .catch(err => console.error('❌ Errore inizializzazione Google Cloud Storage:', err));
+}
+
 // Basic route for testing
 app.get('/', (req, res) => {
     res.json({ message: 'EchoLog API is running' });
@@ -57,4 +65,5 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
     console.log(`🚀 Server in ascolto sulla porta ${PORT}`);
+    console.log(`📦 Storage mode: ${storageConfig.useCloudStorage ? 'Google Cloud Storage' : 'Local Storage'}`);
 }); 

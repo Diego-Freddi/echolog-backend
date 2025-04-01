@@ -1,6 +1,7 @@
 const speech = require('@google-cloud/speech');
 const path = require('path');
 const fs = require('fs');
+const storageConfig = require('../config/storage.config');
 
 // Inizializzazione del client Speech-to-Text
 const client = new speech.SpeechClient();
@@ -36,13 +37,51 @@ const transcribeAudio = async (req, res) => {
 
     console.log('Inizio trascrizione per:', req.file.originalname);
 
-    // Leggi il file audio
-    const audioBytes = fs.readFileSync(req.file.path).toString('base64');
-
     // Prepara la richiesta per Speech-to-Text
-    const audio = {
-      content: audioBytes,
-    };
+    let audio = {};
+    let useGcsUri = false;
+    let gcsUri = '';
+    
+    // Verifica se utilizzare Google Cloud Storage
+    if (storageConfig.useCloudStorage) {
+      try {
+        // Carica il file su GCS se non è già caricato
+        // Questo permette di gestire sia i casi in cui il file viene caricato dal controllo
+        // audio sia quando il file viene inviato direttamente per la trascrizione
+        const fileBuffer = fs.readFileSync(req.file.path);
+        const result = await storageConfig.uploadToGCS(
+          fileBuffer,
+          path.basename(req.file.originalname),
+          req.file.mimetype
+        );
+        
+        // Costruisci l'URI GCS (formato gs://bucket-name/path)
+        // Importante: per Speech-to-Text usiamo l'URI GCS, non l'URL firmato
+        gcsUri = `gs://${process.env.GCS_BUCKET_NAME || 'echolog-audio-files'}/audio/${result.filename}`;
+        
+        console.log('File caricato su GCS, utilizzo URI per Speech-to-Text:', gcsUri);
+        audio = {
+          uri: gcsUri
+        };
+        useGcsUri = true;
+        
+        // Pulisci il file temporaneo
+        fs.unlinkSync(req.file.path);
+      } catch (error) {
+        console.error('Errore caricamento su GCS, fallback a trascrizione diretta:', error);
+        // Fallback al caricamento diretto del contenuto
+        const audioBytes = fs.readFileSync(req.file.path).toString('base64');
+        audio = {
+          content: audioBytes
+        };
+      }
+    } else {
+      // Modalità standard: invio diretto del contenuto
+      const audioBytes = fs.readFileSync(req.file.path).toString('base64');
+      audio = {
+        content: audioBytes
+      };
+    }
 
     const config = getTranscriptionConfig();
     const request = {
@@ -53,27 +92,32 @@ const transcribeAudio = async (req, res) => {
     console.log('Configurazione trascrizione:', {
       encoding: config.encoding,
       sampleRate: config.sampleRateHertz,
-      language: config.languageCode
+      language: config.languageCode,
+      useGcsUri: useGcsUri
     });
 
     // Avvia la trascrizione
     const [operation] = await client.longRunningRecognize(request);
     console.log('Trascrizione avviata, operationId:', operation.name);
 
-    // Pulisci il file temporaneo
-    fs.unlinkSync(req.file.path);
+    // Pulisci il file temporaneo se non è già stato fatto
+    if (!useGcsUri && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
 
     // Restituisci l'operationId al client
     res.status(200).json({
       message: 'Trascrizione avviata con successo',
-      operationId: operation.name
+      operationId: operation.name,
+      useGcsUri: useGcsUri,
+      gcsUri: useGcsUri ? gcsUri : null
     });
 
   } catch (error) {
     console.error('Errore durante la trascrizione:', error);
 
     // Pulisci il file temporaneo in caso di errore
-    if (req.file && req.file.path) {
+    if (req.file && req.file.path && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path);
     }
 
