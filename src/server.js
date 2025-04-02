@@ -9,6 +9,7 @@ const authRoutes = require('./routes/auth.routes');
 const audioRoutes = require('./routes/audio.routes');
 const transcriptionRoutes = require('./routes/transcription.routes');
 const analysisRoutes = require('./routes/analysis.routes');
+const dashboardRoutes = require('./routes/dashboard.routes');
 const storageConfig = require('./config/storage.config');
 
 const app = express();
@@ -37,6 +38,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/audio', audioRoutes);
 app.use('/api/transcribe', transcriptionRoutes);
 app.use('/api/analyze', analysisRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 
 // MongoDB connection
 mongoose.connect(process.env.MONGODB_URI)

@@ -10,6 +10,9 @@ const useCloudStorage = process.env.USE_CLOUD_STORAGE === 'true';
 // Nome del bucket su Google Cloud Storage
 const bucketName = process.env.GCS_BUCKET_NAME || 'echolog-audio-files';
 
+// Periodo di conservazione dei file in giorni
+const FILE_RETENTION_DAYS = 7;
+
 // Inizializzazione del client Storage solo se necessario
 let storage;
 if (useCloudStorage) {
@@ -18,49 +21,66 @@ if (useCloudStorage) {
 
 /**
  * Carica un file su Google Cloud Storage
- * @param {Buffer} fileBuffer - Buffer del file
- * @param {String} fileName - Nome del file
- * @param {String} mimetype - Tipo MIME del file
- * @returns {Promise<String>} URL del file caricato
+ * @param {Buffer} buffer - Buffer del file da caricare
+ * @param {string} originalName - Nome originale del file
+ * @param {string} mimeType - MIME type del file
+ * @returns {Promise<{filename: string, url: string}>} Nome del file e URL firmato
  */
-const uploadToGCS = async (fileBuffer, fileName, mimetype) => {
-  if (!useCloudStorage) {
-    throw new Error('Google Cloud Storage non è abilitato');
-  }
-  
+const uploadToGCS = async (buffer, originalName, mimeType) => {
   try {
+    // Verifica che il bucket esista e sia accessibile
     const bucket = storage.bucket(bucketName);
-    const uniqueFileName = `${uuidv4()}-${fileName}`;
-    const file = bucket.file(`audio/${uniqueFileName}`);
+    const [exists] = await bucket.exists();
+    if (!exists) {
+      throw new Error(`Il bucket ${bucketName} non esiste o non è accessibile`);
+    }
+
+    // Genera un nome file unico
+    const uuid = uuidv4();
+    const filename = `${uuid}-${originalName}`;
+    const file = bucket.file(`audio/${filename}`);
     
-    // Opzioni per il file
-    const options = {
-      metadata: {
-        contentType: mimetype,
-      },
-      resumable: false // Per file piccoli è più efficiente
-    };
+    console.log(`Tentativo di upload su GCS: ${filename} (${buffer.length} byte)`);
     
     // Upload del file
-    await file.save(fileBuffer, options);
+    const stream = file.createWriteStream({
+      resumable: false,
+      contentType: mimeType
+    });
     
-    // Non proviamo a rendere pubblico il file
-    // await file.makePublic(); <-- Questa riga causa l'errore
+    await new Promise((resolve, reject) => {
+      stream.on('error', (err) => {
+        console.error('Errore durante upload su GCS:', err);
+        reject(err);
+      });
+      
+      stream.on('finish', () => {
+        console.log(`File caricato su GCS: audio/${filename}`);
+        resolve();
+      });
+      
+      stream.end(buffer);
+    });
     
-    // Generiamo un URL firmato valido per 24 ore (o configurare come necessario)
-    const signedUrlConfig = {
+    // Genera URL firmato (valido per 24 ore)
+    const [url] = await file.getSignedUrl({
       version: 'v4',
       action: 'read',
-      expires: Date.now() + 24 * 60 * 60 * 1000, // 24 ore
+      expires: Date.now() + 24 * 60 * 60 * 1000 // 24 ore
+    });
+    
+    console.log('URL firmato generato per il download');
+    
+    return {
+      filename,
+      url
     };
-    
-    const [signedUrl] = await file.getSignedUrl(signedUrlConfig);
-    
-    // Restituiamo l'URL firmato e il nome del file
-    return { url: signedUrl, filename: uniqueFileName };
   } catch (error) {
-    console.error('Errore durante il caricamento su GCS:', error);
-    throw error;
+    console.error(`Errore nel caricamento su GCS: ${error.message}`);
+    if (error.code) {
+      console.error(`Codice errore: ${error.code}`);
+    }
+    throw new Error(`Errore nel caricamento su Google Cloud Storage: ${error.message}`);
   }
 };
 
@@ -150,15 +170,55 @@ const getSignedUrl = async (fileName, expiration = 900) => {
   }
 };
 
+/**
+ * Verifica che le regole del ciclo vita siano configurate correttamente
+ * @returns {Promise<boolean>} true se la regola è configurata correttamente
+ */
+const verifyLifecycleRule = async () => {
+  if (!useCloudStorage) return false;
+  
+  try {
+    const bucket = storage.bucket(bucketName);
+    const [metadata] = await bucket.getMetadata();
+    
+    // Verifica se esistono regole del ciclo vita
+    if (metadata.lifecycle && metadata.lifecycle.rule) {
+      const rules = metadata.lifecycle.rule;
+      
+      // Cerca una regola che elimina gli oggetti dopo FILE_RETENTION_DAYS giorni
+      const hasCorrectRule = rules.some(rule => 
+        rule.action && rule.action.type === 'Delete' && 
+        rule.condition && rule.condition.age === FILE_RETENTION_DAYS
+      );
+      
+      if (hasCorrectRule) {
+        console.log(`✅ Regola ciclo vita (${FILE_RETENTION_DAYS} giorni) verificata.`);
+        return true;
+      } else {
+        console.log(`⚠️ ATTENZIONE: Regola ciclo vita di ${FILE_RETENTION_DAYS} giorni non trovata.`);
+        console.log('La regola attuale potrebbe essere diversa da quella prevista dall\'applicazione.');
+        return false;
+      }
+    } else {
+      console.log('⚠️ ATTENZIONE: Nessuna regola ciclo vita configurata sul bucket.');
+      return false;
+    }
+  } catch (error) {
+    console.error('Errore nella verifica del ciclo vita:', error);
+    return false;
+  }
+};
+
 // Verifica che il bucket esista e lo crea se necessario
 const initBucket = async () => {
   if (!useCloudStorage) return;
   
   try {
-    const [buckets] = await storage.getBuckets();
-    const bucketExists = buckets.some(bucket => bucket.name === bucketName);
+    // Utilizziamo bucket.exists() che richiede solo il permesso storage.buckets.get
+    const bucket = storage.bucket(bucketName);
+    const [exists] = await bucket.exists();
     
-    if (!bucketExists) {
+    if (!exists) {
       console.log(`Creazione del bucket '${bucketName}'...`);
       await storage.createBucket(bucketName, {
         location: 'us-central1',
@@ -174,7 +234,7 @@ const initBucket = async () => {
       console.log(`Bucket '${bucketName}' esistente.`);
       
       // Verifichiamo le impostazioni di accesso uniforme
-      const [metadata] = await storage.bucket(bucketName).getMetadata();
+      const [metadata] = await bucket.getMetadata();
       
       const ubaEnabled = metadata.iamConfiguration?.uniformBucketLevelAccess?.enabled || false;
       console.log(`Accesso uniforme al bucket: ${ubaEnabled ? 'abilitato' : 'disabilitato'}`);
@@ -184,6 +244,9 @@ const initBucket = async () => {
         console.log('Consigliato: Abilita l\'accesso uniforme nella console Google Cloud.');
       }
     }
+    
+    // Verifica le regole del ciclo vita
+    await verifyLifecycleRule();
   } catch (error) {
     console.error('Errore durante l\'inizializzazione del bucket:', error);
   }
@@ -195,5 +258,6 @@ module.exports = {
   getFromGCS,
   deleteFromGCS,
   getSignedUrl,
-  initBucket
+  initBucket,
+  FILE_RETENTION_DAYS
 }; 

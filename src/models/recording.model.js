@@ -15,6 +15,15 @@ const recordingSchema = new mongoose.Schema({
         type: String,
         required: true
     },
+    filename: {
+        type: String,
+        unique: true,
+        sparse: true
+    },
+    gcsFilename: {
+        type: String,
+        required: false
+    },
     duration: {
         type: Number,  // in seconds
         required: true

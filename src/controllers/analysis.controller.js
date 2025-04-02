@@ -1,6 +1,7 @@
 const { VertexAI } = require('@google-cloud/vertexai');
 const path = require('path');
 const Analysis = require('../models/analysis.model');
+const Transcription = require('../models/transcription.model');
 require('dotenv').config();
 
 // Inizializzazione del client Vertex AI
@@ -73,12 +74,41 @@ const analyzeText = async (req, res) => {
     }
 
     console.log('Inizio analisi del testo (primi 100 caratteri):', text.substring(0, 100) + '...');
-
-    // Verifica se esiste già un'analisi per questa trascrizione
-    const existingAnalysis = await Analysis.findOne({ 
-      userId: userId,
-      transcriptionId: transcriptionId
-    });
+    
+    // Verifica se l'ID della trascrizione è un ObjectId valido
+    let transcription = null;
+    let isTemporaryId = false;
+    
+    // Verifica se transcriptionId è un ObjectId valido di MongoDB
+    if (transcriptionId.match(/^[0-9a-fA-F]{24}$/)) {
+      try {
+        transcription = await Transcription.findById(transcriptionId);
+      } catch (error) {
+        // Gestiamo silenziosamente l'errore di cast per continuare
+        console.log('Errore nel cercare la trascrizione:', error.message);
+      }
+    } else {
+      // È un ID temporaneo (formato tr-XXXXX-XXX)
+      console.log('ID temporaneo rilevato:', transcriptionId);
+      isTemporaryId = true;
+    }
+    
+    // Controlla se abbiamo già un'analisi per questa trascrizione
+    let existingAnalysis = null;
+    
+    if (transcription) {
+      // Se abbiamo trovato una trascrizione, cerca un'analisi associata
+      existingAnalysis = await Analysis.findOne({ 
+        userId: userId,
+        transcription: transcription._id
+      });
+    } else if (isTemporaryId) {
+      // Se stiamo usando un ID temporaneo, cerca usando il campo transcriptionId (per compatibilità)
+      existingAnalysis = await Analysis.findOne({
+        userId: userId,
+        transcriptionId: transcriptionId
+      });
+    }
 
     if (existingAnalysis) {
       console.log('Analisi esistente trovata per la trascrizione:', transcriptionId);
@@ -91,7 +121,8 @@ const analyzeText = async (req, res) => {
           sections: existingAnalysis.sections
         },
         id: existingAnalysis._id,
-        createdAt: existingAnalysis.createdAt
+        createdAt: existingAnalysis.createdAt,
+        transcriptionId: transcriptionId
       });
     }
 
@@ -142,16 +173,26 @@ const analyzeText = async (req, res) => {
       });
     }
 
-    // Salva l'analisi nel database
-    const newAnalysis = new Analysis({
+    // Crea l'oggetto Analysis
+    const analysisData = {
       userId: userId,
-      transcriptionId: transcriptionId,
       summary: analysisJson.summary,
       tone: analysisJson.tone,
       keywords: analysisJson.keywords,
       sections: analysisJson.sections,
       rawText: text
-    });
+    };
+    
+    // Se abbiamo una trascrizione, colleghiamola
+    if (transcription) {
+      analysisData.transcription = transcription._id;
+    } else {
+      // Altrimenti salviamo l'ID temporaneo per compatibilità
+      analysisData.transcriptionId = transcriptionId;
+    }
+
+    // Salva l'analisi nel database
+    const newAnalysis = new Analysis(analysisData);
 
     await newAnalysis.save();
     console.log('Analisi salvata nel database con ID:', newAnalysis._id);
@@ -160,7 +201,8 @@ const analyzeText = async (req, res) => {
       message: 'Analisi completata con successo',
       analysis: analysisJson,
       id: newAnalysis._id,
-      createdAt: newAnalysis.createdAt
+      createdAt: newAnalysis.createdAt,
+      transcriptionId: transcriptionId
     });
   } catch (error) {
     console.error('Errore durante l\'analisi del testo:', error);
@@ -182,10 +224,11 @@ const getAnalysis = async (req, res) => {
     const { id } = req.params;
     const userId = req.user._id;
 
+    // Trova l'analisi e popola solo i campi necessari della trascrizione
     const analysis = await Analysis.findOne({ 
       _id: id,
       userId: userId
-    });
+    }).populate('transcription', 'fullText createdAt recordingId');
 
     if (!analysis) {
       return res.status(404).json({
@@ -193,6 +236,10 @@ const getAnalysis = async (req, res) => {
         details: 'L\'analisi richiesta non esiste o non appartiene all\'utente'
       });
     }
+
+    // Verifica se abbiamo una trascrizione associata
+    const transcriptionId = analysis.transcription ? analysis.transcription._id : null;
+    const transcriptionText = analysis.transcription ? analysis.transcription.fullText : '';
 
     res.status(200).json({
       analysis: {
@@ -202,10 +249,20 @@ const getAnalysis = async (req, res) => {
         sections: analysis.sections
       },
       id: analysis._id,
-      createdAt: analysis.createdAt
+      createdAt: analysis.createdAt,
+      transcriptionId: transcriptionId,
+      transcriptionText: transcriptionText
     });
   } catch (error) {
     console.error('Errore nel recupero dell\'analisi:', error);
+    
+    // Gestione specifica dell'errore di cast (ID non valido)
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        error: 'ID analisi non valido',
+        details: 'Il formato dell\'ID fornito non è valido'
+      });
+    }
     
     res.status(500).json({
       error: 'Errore nel recupero dell\'analisi',
@@ -225,16 +282,31 @@ const getAnalysisHistory = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const skip = parseInt(req.query.skip) || 0;
 
+    // Trova tutte le analisi con populate della trascrizione per ottenere informazioni addizionali
     const analyses = await Analysis.find({ userId })
+      .populate('transcription', 'fullText createdAt')
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .select('summary keywords createdAt transcriptionId');
+      .select('summary keywords createdAt transcription');
+
+    // Trasforma i risultati nel formato atteso dal frontend
+    const transformedAnalyses = analyses.map(analysis => ({
+      _id: analysis._id,
+      summary: analysis.summary,
+      keywords: analysis.keywords,
+      createdAt: analysis.createdAt,
+      transcriptionId: analysis.transcription._id,
+      transcriptionDate: analysis.transcription.createdAt,
+      textPreview: analysis.transcription.fullText
+        ? analysis.transcription.fullText.substring(0, 100) + '...'
+        : ''
+    }));
 
     const total = await Analysis.countDocuments({ userId });
 
     res.status(200).json({
-      analyses,
+      analyses: transformedAnalyses,
       total,
       limit,
       skip

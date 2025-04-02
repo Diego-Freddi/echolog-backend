@@ -67,4 +67,8 @@ const transcriptionSchema = new mongoose.Schema({
     }
 });
 
+// Indici per migliorare le performance delle query
+transcriptionSchema.index({ userId: 1, createdAt: -1 });
+transcriptionSchema.index({ recordingId: 1 }, { unique: true });
+
 module.exports = mongoose.model('Transcription', transcriptionSchema); 
