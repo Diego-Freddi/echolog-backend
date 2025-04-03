@@ -52,34 +52,51 @@ const uploadAudio = async (req, res) => {
       });
     }
     
-    // Verifica che sia stato inviato un file
+    // Verifica che sia stato fornito un file
     if (!req.file) {
-      return res.status(400).json({ 
-        error: 'Nessun file audio fornito',
-        details: 'È necessario fornire un file audio da caricare'
+      return res.status(400).json({
+        error: 'Nessun file fornito',
+        details: 'È necessario caricare un file audio'
       });
     }
-
-    // Salva il percorso temporaneo per la pulizia in caso di errore
+    
+    // Salviamo il percorso del file temporaneo per la pulizia in caso di errore
     tempFilePath = req.file.path;
     
-    // Verifica se GCS è abilitato
+    console.log(`File caricato: ${req.file.originalname} (${req.file.size} byte)`);
+    
+    // Verifica se utilizzare Google Cloud Storage
     if (!storageConfig.useCloudStorage) {
-      return res.status(501).json({ 
+      // Pulizia del file temporaneo
+      if (tempFilePath && fs.existsSync(tempFilePath)) {
+        fs.unlinkSync(tempFilePath);
+      }
+      
+      return res.status(501).json({
         error: 'Storage cloud non configurato',
         details: 'Il sistema è configurato per utilizzare solo Google Cloud Storage'
       });
     }
     
-    console.log(`Caricamento file audio: ${req.file.originalname} (${req.file.size} bytes, ${req.file.mimetype})`);
-    const fileBuffer = fs.readFileSync(req.file.path);
+    // Legge il file dal filesystem
+    const fileBuffer = fs.readFileSync(tempFilePath);
     
-    // Carica il file su Google Cloud Storage
-    console.log('Inizio caricamento su GCS...');
-    const result = await storageConfig.uploadToGCS(fileBuffer, req.file.originalname, req.file.mimetype);
-    console.log('File caricato su GCS con successo');
+    // Carica il file su GCS
+    console.log('Caricamento file su Google Cloud Storage...');
+    const result = await storageConfig.uploadToGCS(
+      fileBuffer,
+      req.file.originalname,
+      req.file.mimetype
+    );
     
-    // Crea un nuovo recording
+    // Verifica che l'upload sia andato a buon fine e abbiamo un filename valido
+    if (!result || !result.filename || !result.url) {
+      throw new Error('Upload su Google Cloud Storage fallito: risultato non valido');
+    }
+    
+    console.log(`File caricato su GCS: ${result.filename}`);
+    
+    // Crea un nuovo record nel database
     const recording = new Recording({
       userId: req.user._id,
       title: req.file.originalname,
@@ -92,35 +109,41 @@ const uploadAudio = async (req, res) => {
       status: 'completed'
     });
     
+    // Salva il record
     await recording.save();
-    console.log(`Recording salvato con ID: ${recording._id}`);
+    console.log(`Recording salvato nel database: ${recording._id}`);
     
-    // Pulisci il file temporaneo
-    fs.unlinkSync(req.file.path);
-    tempFilePath = null;
-    
-    // Restituisci le informazioni sul file
-    res.status(200).json({
-      message: 'File audio caricato con successo',
-      recordingId: recording._id,
-      gcsFilename: result.filename,
-      audioUrl: result.url
-    });
-  } catch (error) {
-    console.error('Errore durante il caricamento del file:', error);
-    
-    // Pulisci il file temporaneo in caso di errore
+    // Pulizia del file temporaneo
     if (tempFilePath && fs.existsSync(tempFilePath)) {
-      try {
-        fs.unlinkSync(tempFilePath);
-        console.log('File temporaneo eliminato dopo errore');
-      } catch (e) {
-        console.error('Errore durante la pulizia del file temporaneo:', e);
-      }
+      fs.unlinkSync(tempFilePath);
+      console.log('File temporaneo eliminato');
     }
     
+    // Invia la risposta al client
+    res.status(201).json({
+      message: 'File audio caricato con successo',
+      recording: {
+        id: recording._id,
+        title: recording.title,
+        audioUrl: recording.audioUrl,
+        format: recording.format,
+        size: recording.size
+      },
+      gcsFilename: result.filename
+    });
+    
+  } catch (error) {
+    console.error('Errore durante l\'upload dell\'audio:', error);
+    
+    // Pulizia del file temporaneo in caso di errore
+    if (tempFilePath && fs.existsSync(tempFilePath)) {
+      fs.unlinkSync(tempFilePath);
+      console.log('File temporaneo eliminato dopo errore');
+    }
+    
+    // Invia risposta di errore al client
     res.status(500).json({
-      error: 'Errore durante il caricamento del file audio',
+      error: 'Errore durante l\'upload dell\'audio',
       details: error.message
     });
   }
@@ -142,14 +165,6 @@ const getAudio = async (req, res) => {
       return res.status(501).json({ 
         error: 'Storage cloud non configurato',
         details: 'Il sistema è configurato per utilizzare solo Google Cloud Storage'
-      });
-    }
-    
-    // Verifica se è un ID temporaneo (formato tr-*)
-    if (filename.startsWith('tr-')) {
-      return res.status(404).json({
-        error: 'File non disponibile',
-        details: 'I file audio associati a ID temporanei non sono disponibili per il download'
       });
     }
     

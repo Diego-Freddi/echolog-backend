@@ -28,6 +28,18 @@ if (useCloudStorage) {
  */
 const uploadToGCS = async (buffer, originalName, mimeType) => {
   try {
+    if (!useCloudStorage) {
+      throw new Error('Google Cloud Storage non è abilitato');
+    }
+
+    if (!buffer || buffer.length === 0) {
+      throw new Error('Buffer del file non valido o vuoto');
+    }
+
+    if (!originalName) {
+      throw new Error('Nome file originale non specificato');
+    }
+
     // Verifica che il bucket esista e sia accessibile
     const bucket = storage.bucket(bucketName);
     const [exists] = await bucket.exists();
@@ -80,7 +92,7 @@ const uploadToGCS = async (buffer, originalName, mimeType) => {
     if (error.code) {
       console.error(`Codice errore: ${error.code}`);
     }
-    throw new Error(`Errore nel caricamento su Google Cloud Storage: ${error.message}`);
+    throw error; // Rilanciamo l'errore originale senza modificarlo
   }
 };
 

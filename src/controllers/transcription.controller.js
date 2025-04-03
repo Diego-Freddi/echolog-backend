@@ -98,6 +98,11 @@ const transcribeAudio = async (req, res) => {
             req.file.mimetype
           );
           
+          // Verifica che l'upload sia andato a buon fine e abbiamo un filename valido
+          if (!result || !result.filename || !result.url) {
+            throw new Error('Upload su Google Cloud Storage fallito: risultato non valido');
+          }
+          
           // Costruisci l'URI GCS
           gcsUri = `gs://${process.env.GCS_BUCKET_NAME || 'echolog-audio-files'}/audio/${result.filename}`;
           
@@ -331,102 +336,7 @@ const getTranscriptionStatus = async (req, res) => {
   }
 };
 
-/**
- * Controlla lo stato di una trascrizione avviata
- * @param {Request} req - Request object
- * @param {Response} res - Response object
- */
-const checkTranscription = async (req, res) => {
-  try {
-    const { operationId } = req.params;
-    
-    if (!TRANSCRIPTION_OPERATIONS[operationId]) {
-      return res.status(404).json({
-        error: 'Operazione non trovata',
-        details: 'L\'ID operazione specificato non è valido o è scaduto'
-      });
-    }
-    
-    const operation = TRANSCRIPTION_OPERATIONS[operationId];
-    
-    if (operation.completed) {
-      console.log('Operazione già completata:', operationId);
-      
-      // Se c'è un errore
-      if (operation.error) {
-        return res.status(200).json({
-          status: 'failed',
-          error: operation.error
-        });
-      }
-      
-      // Se è andato tutto bene, restituisci la trascrizione
-      return res.status(200).json({
-        status: 'completed',
-        transcription: operation.transcription,
-        transcriptionId: operation.transcriptionId,
-        audioFilename: operation.audioFilename // Aggiungi audioFilename alla risposta
-      });
-    }
-    
-    // Verifica lo stato dell'operazione
-    const [ response ] = await operation.latestResponse.promise();
-    
-    // Se non è completa, restituisci lo stato
-    if (!response.done) {
-      console.log('Operazione ancora in corso:', operationId);
-      return res.status(200).json({
-        status: 'processing',
-        progress: Math.floor(Math.random() * 20) + 60 // Valore esempio tra 60 e 80
-      });
-    }
-    
-    // Se c'è stato un errore
-    if (response.error) {
-      console.error('Errore durante la trascrizione:', response.error);
-      operation.completed = true;
-      operation.error = response.error.message || 'Errore sconosciuto durante la trascrizione';
-      
-      return res.status(200).json({
-        status: 'failed',
-        error: operation.error
-      });
-    }
-    
-    // Estrai la trascrizione dai risultati
-    const transcription = response.results
-      .map(result => result.alternatives[0].transcript)
-      .join('\n');
-    
-    console.log('Trascrizione completata con successo:', operationId);
-    
-    // Genera un ID univoco per la trascrizione
-    const transcriptionId = `tr-${uuidv4().substring(0, 12)}-${Math.floor(Math.random() * 1000)}`;
-    
-    // Salva i dati
-    operation.completed = true;
-    operation.transcription = transcription;
-    operation.transcriptionId = transcriptionId;
-    operation.audioFilename = operation.audioFilename; // Assicurati che venga salvato
-    
-    res.status(200).json({
-      status: 'completed',
-      transcription: transcription,
-      transcriptionId: transcriptionId,
-      audioFilename: operation.audioFilename // Includi audioFilename nella risposta
-    });
-  } catch (error) {
-    console.error('Errore durante il controllo della trascrizione:', error);
-    
-    res.status(500).json({
-      status: 'failed',
-      error: error.message || 'Errore durante il controllo della trascrizione'
-    });
-  }
-};
-
 module.exports = {
   transcribeAudio,
-  getTranscriptionStatus,
-  checkTranscription
+  getTranscriptionStatus
 };

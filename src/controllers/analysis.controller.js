@@ -75,21 +75,21 @@ const analyzeText = async (req, res) => {
 
     console.log('Inizio analisi del testo (primi 100 caratteri):', text.substring(0, 100) + '...');
     
-    // Verifica che transcriptionId sia un ObjectId valido di MongoDB
-    if (!transcriptionId.match(/^[0-9a-fA-F]{24}$/)) {
+    // Cerca la Transcription nel database
+    let transcription;
+    try {
+      transcription = await Transcription.findById(transcriptionId);
+      
+      if (!transcription) {
+        return res.status(404).json({
+          error: 'Trascrizione non trovata',
+          details: `Nessuna trascrizione trovata con ID ${transcriptionId}`
+        });
+      }
+    } catch (error) {
       return res.status(400).json({
         error: 'ID trascrizione non valido',
-        details: 'Il formato dell\'ID trascrizione fornito non è valido. Deve essere un MongoDB ObjectID.'
-      });
-    }
-    
-    // Cerca la Transcription nel database
-    const transcription = await Transcription.findById(transcriptionId);
-    
-    if (!transcription) {
-      return res.status(404).json({
-        error: 'Trascrizione non trovata',
-        details: `Nessuna trascrizione trovata con ID ${transcriptionId}`
+        details: 'Il formato dell\'ID trascrizione fornito non è valido'
       });
     }
     
@@ -120,7 +120,7 @@ const analyzeText = async (req, res) => {
 
     // Impostazioni di generazione per Gemini
     const generationConfig = {
-      temperature: 0.2, // Bassa temperatura per risposte più deterministiche/precise
+      temperature: 0.2,
       topP: 0.8,
       topK: 40,
       maxOutputTokens: parseInt(process.env.GEMINI_MAX_OUTPUT_TOKENS || '4096'),
@@ -165,7 +165,7 @@ const analyzeText = async (req, res) => {
     // Crea il nuovo oggetto Analysis
     const newAnalysis = new Analysis({
       userId: userId,
-      transcription: transcription._id, // Riferimento diretto al documento Transcription
+      transcription: transcription._id,
       summary: analysisJson.summary,
       tone: analysisJson.tone,
       keywords: analysisJson.keywords,
