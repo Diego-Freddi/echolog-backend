@@ -56,7 +56,7 @@ NON includere spiegazioni o introduzioni. Rispondi SOLO con JSON formattato corr
  */
 const analyzeText = async (req, res) => {
   try {
-    const { text, transcriptionId } = req.body;
+    const { text, transcriptionId, forceReanalysis } = req.body;
     const userId = req.user._id; // Ottenuto dal middleware di autenticazione
 
     if (!text || text.trim().length === 0) {
@@ -99,7 +99,8 @@ const analyzeText = async (req, res) => {
       transcription: transcription._id
     });
 
-    if (existingAnalysis) {
+    // Se esiste un'analisi e non è stata richiesta una rianalisi forzata, restituisci quella esistente
+    if (existingAnalysis && !forceReanalysis) {
       console.log('Analisi esistente trovata per la trascrizione:', transcriptionId);
       return res.status(200).json({
         message: 'Analisi già esistente',
@@ -113,6 +114,12 @@ const analyzeText = async (req, res) => {
         createdAt: existingAnalysis.createdAt,
         transcriptionId: transcription._id
       });
+    }
+
+    // Se è stata richiesta una rianalisi forzata e l'analisi esiste già, elimina quella precedente
+    if (existingAnalysis && forceReanalysis) {
+      console.log('Aggiornamento analisi richiesto, eliminazione analisi precedente...');
+      await Analysis.deleteOne({ _id: existingAnalysis._id });
     }
 
     // Prepara il prompt con il testo da analizzare

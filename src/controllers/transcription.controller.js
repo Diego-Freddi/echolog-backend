@@ -5,6 +5,7 @@ const storageConfig = require('../config/storage.config');
 const { v4: uuidv4 } = require('uuid');
 const Recording = require('../models/recording.model');
 const Transcription = require('../models/transcription.model');
+const Analysis = require('../models/analysis.model');
 
 // Inizializzazione del client Speech-to-Text
 const client = new speech.SpeechClient();
@@ -336,7 +337,99 @@ const getTranscriptionStatus = async (req, res) => {
   }
 };
 
+/**
+ * Elimina una trascrizione e tutti i dati associati (analisi, registrazione, file GCS)
+ * @param {Request} req - Request object
+ * @param {Response} res - Response object
+ */
+const deleteTranscription = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id;
+    
+    // Verifica che l'utente sia autenticato
+    if (!userId) {
+      return res.status(401).json({
+        error: 'Autenticazione necessaria',
+        details: 'Devi effettuare il login per utilizzare questa funzionalità'
+      });
+    }
+
+    // Trova la trascrizione
+    const transcription = await Transcription.findOne({ 
+      _id: id,
+      userId: userId
+    });
+
+    if (!transcription) {
+      return res.status(404).json({
+        error: 'Trascrizione non trovata',
+        details: 'La trascrizione richiesta non esiste o non appartiene all\'utente'
+      });
+    }
+
+    // Trova e elimina l'analisi associata
+    const analysisDeleted = await Analysis.deleteMany({
+      transcription: transcription._id,
+      userId: userId
+    });
+    
+    console.log(`Analisi eliminate: ${analysisDeleted.deletedCount}`);
+
+    // Trova la registrazione associata
+    const recording = await Recording.findOne({
+      _id: transcription.recordingId,
+      userId: userId
+    });
+
+    // Elimina il file audio da GCS se presente
+    if (recording && recording.gcsFilename) {
+      try {
+        const deleted = await storageConfig.deleteFromGCS(recording.gcsFilename);
+        console.log(`File audio eliminato da GCS: ${deleted ? 'Sì' : 'No'}`);
+      } catch (error) {
+        console.error('Errore nell\'eliminazione del file audio da GCS:', error);
+        // Continuiamo comunque perché il file potrebbe essere già stato eliminato o scaduto
+      }
+    }
+
+    // Elimina la registrazione
+    if (recording) {
+      await Recording.deleteOne({ _id: recording._id });
+      console.log(`Registrazione eliminata: ${recording._id}`);
+    }
+
+    // Elimina la trascrizione
+    await Transcription.deleteOne({ _id: transcription._id });
+    console.log(`Trascrizione eliminata: ${transcription._id}`);
+
+    // Ritorna successo
+    res.status(200).json({
+      message: 'Trascrizione e dati associati eliminati con successo',
+      transcriptionId: transcription._id,
+      recordingId: recording ? recording._id : null,
+      analysisDeleted: analysisDeleted.deletedCount
+    });
+  } catch (error) {
+    console.error('Errore nell\'eliminazione della trascrizione:', error);
+    
+    // Gestione specifica dell'errore di cast (ID non valido)
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        error: 'ID trascrizione non valido',
+        details: 'Il formato dell\'ID fornito non è valido'
+      });
+    }
+    
+    res.status(500).json({
+      error: 'Errore nell\'eliminazione della trascrizione',
+      details: error.message
+    });
+  }
+};
+
 module.exports = {
   transcribeAudio,
-  getTranscriptionStatus
+  getTranscriptionStatus,
+  deleteTranscription
 };

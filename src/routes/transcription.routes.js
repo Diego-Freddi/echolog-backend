@@ -3,7 +3,7 @@ const router = express.Router();
 const multer = require('multer');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
-const { transcribeAudio, getTranscriptionStatus } = require('../controllers/transcription.controller');
+const { transcribeAudio, getTranscriptionStatus, deleteTranscription } = require('../controllers/transcription.controller');
 const authMiddleware = require('../middleware/auth.middleware');
 
 // Configurazione multer per i file audio
@@ -41,5 +41,8 @@ router.post('/', upload.single('audio'), transcribeAudio);
 
 // Route per controllare lo stato della trascrizione
 router.get('/status/:operationId', getTranscriptionStatus);
+
+// Route per eliminare una trascrizione e i dati associati
+router.delete('/:id', deleteTranscription);
 
 module.exports = router;
