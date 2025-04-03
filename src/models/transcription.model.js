@@ -53,7 +53,7 @@ const transcriptionSchema = new mongoose.Schema({
     },
     language: {
         type: String,
-        enum: ['it-IT', 'en-US'],
+        enum: ['it', 'en'],
         required: true
     },
     createdAt: {

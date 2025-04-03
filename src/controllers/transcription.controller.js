@@ -17,7 +17,7 @@ const client = new speech.SpeechClient();
 const getTranscriptionConfig = (options = {}) => ({
   encoding: options.encoding || 'LINEAR16',
   sampleRateHertz: options.sampleRateHertz || 16000,
-  languageCode: options.languageCode || 'it-IT',
+  languageCode: options.languageCode || 'it-IT', // Formato completo per Google Speech-to-Text (ISO 639-1 + paese)
   enableAutomaticPunctuation: true,
   model: 'default', // Usiamo il modello default per ora
   useEnhanced: true,
@@ -249,69 +249,68 @@ const getTranscriptionStatus = async (req, res) => {
         .map(result => result.alternatives[0].transcript)
         .join(' ');
 
-      // Cerca il recording tramite recordingId
-      let recording = null;
-      if (recordingId) {
-        recording = await Recording.findById(recordingId);
-        if (!recording) {
-          console.warn(`Recording ${recordingId} non trovato, la trascrizione non sarà collegata`);
-        }
+      // Verifica che recordingId sia fornito
+      if (!recordingId) {
+        console.error('recordingId non fornito per il salvataggio della trascrizione');
+        return res.status(400).json({
+          status: 'failed',
+          error: 'ID del recording mancante',
+          details: 'È necessario fornire un recordingId valido per salvare la trascrizione'
+        });
       }
 
-      // Crea un nuovo documento Transcription o usa un ID temporaneo
-      let transcriptionId = null;
+      // Cerca il recording tramite recordingId
+      let recording = null;
       try {
-        // Se abbiamo un recording, creiamo una trascrizione collegata
-        if (recording) {
-          const transcription = new Transcription({
-            recordingId: recording._id,
-            userId: req.user._id,
-            fullText: transcriptionText,
-            language: 'it-IT', // Per ora hardcoded, da rendere dinamico in futuro
-            status: 'completed',
-            sections: []
-          });
-          
-          await transcription.save();
-          console.log(`Trascrizione salvata con ID: ${transcription._id}`);
-          transcriptionId = transcription._id;
-          
-          // Aggiorna il recordingId nel frontend
-          return res.status(200).json({
-            status: 'completed',
-            transcription: transcriptionText,
-            transcriptionId: transcription._id,
-            recordingId: recording._id
-          });
-        } else {
-          // Se non abbiamo un recording, restituiamo solo il testo
-          // Genera un ID temporaneo in un formato più riconoscibile
-          const randomId = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-          const timestamp = Date.now();
-          transcriptionId = `tr-${timestamp}-${randomId}`;
-          
-          console.warn('Nessun recording trovato, trascrizione non salvata nel database, usando ID temporaneo:', transcriptionId);
-          return res.status(200).json({
-            status: 'completed',
-            transcription: transcriptionText,
-            transcriptionId: transcriptionId,
-            warning: 'Nessun recording trovato, la trascrizione non è stata salvata permanentemente'
+        recording = await Recording.findById(recordingId);
+        if (!recording) {
+          console.error(`Recording ${recordingId} non trovato`);
+          return res.status(404).json({
+            status: 'failed',
+            error: 'Recording non trovato',
+            details: `Il recording con ID ${recordingId} non esiste o è stato eliminato`
           });
         }
       } catch (error) {
-        console.error('Errore nel salvare la trascrizione:', error);
-        // In caso di errore nel salvataggio, restituiamo comunque il testo con un ID temporaneo
-        const randomId = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-        const timestamp = Date.now();
-        transcriptionId = `tr-${timestamp}-${randomId}`;
+        console.error(`Errore durante la ricerca del recording ${recordingId}:`, error);
+        return res.status(400).json({
+          status: 'failed',
+          error: 'ID recording non valido',
+          details: 'Il formato dell\'ID fornito non è valido'
+        });
+      }
+
+      // A questo punto abbiamo sia il testo trascritto che un recording valido
+      console.log(`Creazione trascrizione per recording: ${recording._id} (${recording.title})`);
+      
+      try {
+        // Creiamo una trascrizione collegata al recording
+        const transcription = new Transcription({
+          recordingId: recording._id,
+          userId: req.user._id,
+          fullText: transcriptionText,
+          language: 'it', // Formato ISO 639-1 supportato da MongoDB
+          status: 'completed',
+          sections: []
+        });
         
+        await transcription.save();
+        console.log(`Trascrizione salvata con ID: ${transcription._id}`);
+        
+        // Ritorna i dati completi
         return res.status(200).json({
           status: 'completed',
           transcription: transcriptionText,
-          transcriptionId: transcriptionId,
+          transcriptionId: transcription._id,
+          recordingId: recording._id
+        });
+      } catch (error) {
+        console.error('Errore nel salvare la trascrizione:', error);
+        return res.status(500).json({
+          status: 'failed',
           error: 'Errore nel salvare la trascrizione',
           details: error.message,
-          warning: 'La trascrizione non è stata salvata permanentemente'
+          recordingId: recording._id
         });
       }
     }

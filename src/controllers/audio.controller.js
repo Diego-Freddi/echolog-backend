@@ -145,6 +145,14 @@ const getAudio = async (req, res) => {
       });
     }
     
+    // Verifica se è un ID temporaneo (formato tr-*)
+    if (filename.startsWith('tr-')) {
+      return res.status(404).json({
+        error: 'File non disponibile',
+        details: 'I file audio associati a ID temporanei non sono disponibili per il download'
+      });
+    }
+    
     // Controlliamo se il parametro è un ObjectId (recordingId)
     if (filename.match(/^[0-9a-fA-F]{24}$/)) {
       // È un ObjectId, cerchiamo direttamente il Recording
@@ -200,9 +208,9 @@ const getAudio = async (req, res) => {
       });
     }
   } catch (error) {
-    console.error('Errore nel recupero del file:', error);
-    res.status(500).json({ 
-      error: 'Errore nel recupero del file audio',
+    console.error('Errore durante il recupero del file audio:', error);
+    res.status(500).json({
+      error: 'Errore durante il recupero del file audio',
       details: error.message
     });
   }

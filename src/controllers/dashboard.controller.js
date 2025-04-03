@@ -101,7 +101,7 @@ const getTranscriptionHistory = async (req, res) => {
     // Arricchisci con informazioni sullo stato del file audio
     const enrichedAnalyses = analyses.map(analysis => {
       // Gestione sicura delle relazioni potenzialmente mancanti
-      const transcription = analysis.transcription || {};
+      const transcription = analysis.transcription || {}; 
       const recording = transcription.recordingId || {};
       
       const createdAt = new Date(analysis.createdAt);
@@ -114,10 +114,23 @@ const getTranscriptionHistory = async (req, res) => {
       // Determina se il file è ancora disponibile
       const isAudioAvailable = diffDays <= FILE_RETENTION_DAYS;
       const daysRemaining = isAudioAvailable ? FILE_RETENTION_DAYS - diffDays : 0;
+
+      // Gestisci sia riferimenti ObjectId che ID temporanei
+      let transcriptionIdValue;
+      if (analysis.transcription) {
+        // Caso normale: abbiamo un riferimento alla trascrizione
+        transcriptionIdValue = analysis.transcription._id || null;
+      } else if (analysis.transcriptionId) {
+        // Caso ID temporaneo: usiamo direttamente l'ID temporaneo
+        transcriptionIdValue = analysis.transcriptionId;
+      } else {
+        // Caso senza ID: null
+        transcriptionIdValue = null;
+      }
       
       return {
         _id: analysis._id,
-        transcriptionId: transcription._id || null,
+        transcriptionId: transcriptionIdValue,
         recordingId: recording._id || null,
         audioFilename: recording.gcsFilename || null,
         summary: analysis.summary || '',
