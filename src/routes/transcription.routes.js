@@ -1,48 +1,76 @@
 const express = require('express');
 const router = express.Router();
+const { 
+  transcribeAudio, 
+  getTranscriptionStatus,
+  deleteTranscription,
+  transcribeFromText,
+  transcribeFromFile 
+} = require('../controllers/transcription.controller');
 const multer = require('multer');
 const path = require('path');
-const { v4: uuidv4 } = require('uuid');
-const { transcribeAudio, getTranscriptionStatus, deleteTranscription } = require('../controllers/transcription.controller');
 const authMiddleware = require('../middleware/auth.middleware');
 
-// Configurazione multer per i file audio
+// Configurazione di Multer per file audio e documenti
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, 'uploads/temp');
+    cb(null, 'uploads/');
   },
   filename: (req, file, cb) => {
-    const uniqueId = uuidv4();
-    cb(null, `${uniqueId}${path.extname(file.originalname)}`);
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
   }
 });
 
-// Configurazione upload
-const upload = multer({
+// Configurazione dell'upload per file audio
+const uploadAudio = multer({
   storage: storage,
   limits: {
-    fileSize: 100 * 1024 * 1024, // 100MB max
+    fileSize: 25 * 1024 * 1024 // 25MB max
   },
   fileFilter: (req, file, cb) => {
-    const allowedMimes = ['audio/wav', 'audio/mp3', 'audio/mpeg'];
-    if (allowedMimes.includes(file.mimetype)) {
+    if (file.mimetype.startsWith('audio/')) {
       cb(null, true);
     } else {
-      cb(new Error('Formato file non supportato. Usa WAV o MP3.'));
+      cb(new Error('Formato file non supportato. Sono accettati solo file audio.'), false);
     }
   }
 });
 
-// Tutte le route richiedono autenticazione
+// Configurazione dell'upload per file di testo
+const uploadDocument = multer({
+  storage: storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB max
+  },
+  fileFilter: (req, file, cb) => {
+    const fileExt = path.extname(file.originalname).toLowerCase();
+    const allowedExts = ['.pdf', '.docx', '.doc', '.txt'];
+    
+    if (allowedExts.includes(fileExt)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Formato file non supportato. Formati accettati: PDF, DOCX, DOC, TXT.'), false);
+    }
+  }
+});
+
+// Middleware applicato a tutte le rotte
 router.use(authMiddleware);
 
-// Route per la trascrizione
-router.post('/', upload.single('audio'), transcribeAudio);
+// Rotta per iniziare la trascrizione di un file audio
+router.post('/', uploadAudio.single('audio'), transcribeAudio);
 
-// Route per controllare lo stato della trascrizione
+// Rotta per verificare lo stato di una trascrizione in corso
 router.get('/status/:operationId', getTranscriptionStatus);
 
-// Route per eliminare una trascrizione e i dati associati
+// Rotta per eliminare una trascrizione
 router.delete('/:id', deleteTranscription);
+
+// Rotta per trascrizione da testo diretto
+router.post('/fromText', transcribeFromText);
+
+// Rotta per trascrizione da file (PDF, DOCX, TXT)
+router.post('/fromFile', uploadDocument.single('document'), transcribeFromFile);
 
 module.exports = router;

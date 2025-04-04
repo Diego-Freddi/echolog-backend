@@ -17,28 +17,28 @@ exports.getProjectCosts = async (req, res) => {
       return res.status(401).json({ error: 'Non autorizzato' });
     }
     
-    console.log('Richiesta dati di fatturazione per il progetto:', projectId);
-    console.log('Account di fatturazione:', billingAccountId);
+    // console.log('Richiesta dati di fatturazione per il progetto:', projectId);
+    // console.log('Account di fatturazione:', billingAccountId);
     
     // Crea un client per Cloud Billing con le credenziali specifiche
     const billingClient = new CloudBillingClient({
       keyFilename: billingCredentialsPath
     });
     
-    console.log('Client Cloud Billing creato con credenziali da:', billingCredentialsPath);
+    // console.log('Client Cloud Billing creato con credenziali da:', billingCredentialsPath);
     
     // Ottieni informazioni sull'account di fatturazione
     const billingName = `billingAccounts/${billingAccountId}`;
-    console.log('Recupero informazioni per:', billingName);
+    // console.log('Recupero informazioni per:', billingName);
     
     let billingInfo;
     try {
       [billingInfo] = await billingClient.getBillingAccount({
         name: billingName
       });
-      console.log('Informazioni fatturazione recuperate:', billingInfo.name);
+    //   console.log('Informazioni fatturazione recuperate:', billingInfo.name);
     } catch (err) {
-      console.error('Errore nel recupero delle informazioni di fatturazione:', err);
+    //   console.error('Errore nel recupero delle informazioni di fatturazione:', err);
       return res.status(500).json({
         error: 'Errore nel recupero delle informazioni di fatturazione',
         details: err.message
@@ -89,7 +89,7 @@ exports.getProjectCosts = async (req, res) => {
     });
     
   } catch (error) {
-    console.error('Errore nel recupero dei dati di fatturazione:', error);
+    // console.error('Errore nel recupero dei dati di fatturazione:', error);
     res.status(500).json({ 
       error: 'Errore nel recupero dei dati di fatturazione',
       details: error.message

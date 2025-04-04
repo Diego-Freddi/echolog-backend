@@ -6,6 +6,8 @@ const { v4: uuidv4 } = require('uuid');
 const Recording = require('../models/recording.model');
 const Transcription = require('../models/transcription.model');
 const Analysis = require('../models/analysis.model');
+const mammoth = require('mammoth');
+const pdfParse = require('pdf-parse');
 
 // Inizializzazione del client Speech-to-Text
 const client = new speech.SpeechClient();
@@ -428,8 +430,214 @@ const deleteTranscription = async (req, res) => {
   }
 };
 
+/**
+ * Crea una trascrizione da testo inserito direttamente dall'utente
+ * @param {Request} req - Request object
+ * @param {Response} res - Response object
+ */
+const transcribeFromText = async (req, res) => {
+  try {
+    // Verifica che l'utente sia autenticato
+    if (!req.user || !req.user._id) {
+      return res.status(401).json({
+        error: 'Autenticazione necessaria',
+        details: 'Devi effettuare il login per utilizzare questa funzionalità'
+      });
+    }
+
+    // Verifica che il testo sia stato fornito
+    const { text, title } = req.body;
+    if (!text || text.trim().length === 0) {
+      return res.status(400).json({
+        error: 'Testo mancante',
+        details: 'È necessario fornire il testo da trascrivere'
+      });
+    }
+
+    const finalTitle = title || `Testo diretto ${new Date().toLocaleString('it-IT')}`;
+    
+    console.log(`Creazione recording virtuale per input diretto: "${finalTitle}"`);
+    
+    // Crea un recording virtuale (senza file audio)
+    const recording = new Recording({
+      userId: req.user._id,
+      title: finalTitle,
+      audioUrl: null, // Nessun URL audio
+      filename: null, // Nessun filename
+      gcsFilename: null, // Nessun file su GCS
+      duration: 0, // Durata simbolica
+      format: 'TEXT', // Formato speciale per registrazioni virtuali
+      size: Buffer.from(text).length, // Dimensione del testo in bytes
+      status: 'completed'
+    });
+    
+    await recording.save();
+    console.log(`Recording virtuale creato con ID: ${recording._id}`);
+    
+    // Crea una trascrizione collegata al recording virtuale
+    const transcription = new Transcription({
+      recordingId: recording._id,
+      userId: req.user._id,
+      fullText: text,
+      language: 'it', // Assumiamo italiano come default
+      status: 'completed',
+      sections: []
+    });
+    
+    await transcription.save();
+    console.log(`Trascrizione creata con ID: ${transcription._id}`);
+    
+    // Ritorna i dati completi
+    return res.status(200).json({
+      status: 'completed',
+      message: 'Trascrizione da testo completata con successo',
+      transcription: text,
+      transcriptionId: transcription._id,
+      recordingId: recording._id
+    });
+  } catch (error) {
+    console.error('Errore durante la creazione della trascrizione da testo:', error);
+    
+    res.status(500).json({
+      error: 'Errore durante la creazione della trascrizione',
+      details: error.message
+    });
+  }
+};
+
+/**
+ * Estrae e crea una trascrizione da un file (PDF, DOC, DOCX, TXT)
+ * @param {Request} req - Request object
+ * @param {Response} res - Response object
+ */
+const transcribeFromFile = async (req, res) => {
+  try {
+    // Verifica che l'utente sia autenticato
+    if (!req.user || !req.user._id) {
+      return res.status(401).json({
+        error: 'Autenticazione necessaria',
+        details: 'Devi effettuare il login per utilizzare questa funzionalità'
+      });
+    }
+
+    // Verifica se abbiamo un file
+    if (!req.file) {
+      return res.status(400).json({ 
+        error: 'Nessun file fornito',
+        details: 'È necessario fornire un file per l\'estrazione del testo'
+      });
+    }
+
+    const file = req.file;
+    const filePath = file.path;
+    const fileExtension = path.extname(file.originalname).toLowerCase();
+    let extractedText = '';
+
+    console.log(`Estrazione testo da file ${file.originalname} (${fileExtension})`);
+
+    // Estrai il testo in base al tipo di file
+    try {
+      if (fileExtension === '.pdf') {
+        // Estrai testo da PDF
+        const dataBuffer = fs.readFileSync(filePath);
+        const pdfData = await pdfParse(dataBuffer);
+        extractedText = pdfData.text;
+      } else if (fileExtension === '.docx' || fileExtension === '.doc') {
+        // Estrai testo da DOCX/DOC
+        const dataBuffer = fs.readFileSync(filePath);
+        const result = await mammoth.extractRawText({ buffer: dataBuffer });
+        extractedText = result.value;
+      } else if (fileExtension === '.txt') {
+        // Leggi file di testo direttamente
+        extractedText = fs.readFileSync(filePath, 'utf8');
+      } else {
+        // Formato non supportato
+        return res.status(400).json({
+          error: 'Formato file non supportato',
+          details: `Il formato ${fileExtension} non è supportato. Formati supportati: PDF, DOCX, DOC, TXT`
+        });
+      }
+    } catch (extractionError) {
+      console.error('Errore nell\'estrazione del testo:', extractionError);
+      return res.status(500).json({
+        error: 'Errore nell\'estrazione del testo',
+        details: extractionError.message
+      });
+    } finally {
+      // Pulisci il file temporaneo
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        console.log(`File temporaneo eliminato: ${filePath}`);
+      }
+    }
+
+    // Verifica che sia stato estratto del testo
+    if (!extractedText || extractedText.trim().length === 0) {
+      return res.status(400).json({
+        error: 'Nessun testo estratto',
+        details: 'Non è stato possibile estrarre testo dal file fornito'
+      });
+    }
+
+    console.log(`Testo estratto con successo (${extractedText.length} caratteri)`);
+    
+    // Crea un recording virtuale (senza file audio)
+    const recording = new Recording({
+      userId: req.user._id,
+      title: file.originalname,
+      audioUrl: null, // Nessun URL audio
+      filename: file.originalname,
+      gcsFilename: null, // Nessun file su GCS
+      duration: 0, // Durata simbolica
+      format: 'TEXT', // Formato speciale per registrazioni virtuali
+      size: file.size,
+      status: 'completed'
+    });
+    
+    await recording.save();
+    console.log(`Recording virtuale creato con ID: ${recording._id}`);
+    
+    // Crea una trascrizione collegata al recording virtuale
+    const transcription = new Transcription({
+      recordingId: recording._id,
+      userId: req.user._id,
+      fullText: extractedText,
+      language: 'it', // Assumiamo italiano come default
+      status: 'completed',
+      sections: []
+    });
+    
+    await transcription.save();
+    console.log(`Trascrizione creata con ID: ${transcription._id}`);
+    
+    // Ritorna i dati completi
+    return res.status(200).json({
+      status: 'completed',
+      message: 'Estrazione testo completata con successo',
+      transcription: extractedText,
+      transcriptionId: transcription._id,
+      recordingId: recording._id,
+      filename: file.originalname
+    });
+  } catch (error) {
+    console.error('Errore durante l\'estrazione del testo dal file:', error);
+    
+    // Pulisci il file temporaneo in caso di errore
+    if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    
+    res.status(500).json({
+      error: 'Errore durante l\'estrazione del testo',
+      details: error.message
+    });
+  }
+};
+
 module.exports = {
   transcribeAudio,
   getTranscriptionStatus,
-  deleteTranscription
+  deleteTranscription,
+  transcribeFromText,
+  transcribeFromFile
 };

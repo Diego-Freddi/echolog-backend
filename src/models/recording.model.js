@@ -13,7 +13,9 @@ const recordingSchema = new mongoose.Schema({
     },
     audioUrl: {
         type: String,
-        required: true
+        required: function() {
+            return this.format !== 'TEXT'; // L'URL audio è richiesto solo se non è un formato testuale
+        }
     },
     filename: {
         type: String,
@@ -30,7 +32,7 @@ const recordingSchema = new mongoose.Schema({
     },
     format: {
         type: String,
-        enum: ['WAV', 'MP3'],
+        enum: ['WAV', 'MP3', 'TEXT'], // Aggiunto TEXT per recording virtuali
         required: true
     },
     size: {
