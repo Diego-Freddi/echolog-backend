@@ -1,6 +1,6 @@
 const { CloudBillingClient } = require('@google-cloud/billing');
-const { BigQuery } = require('@google-cloud/bigquery');
 const path = require('path');
+const fs = require('fs');
 
 // Ottieni l'ID del progetto Google Cloud e l'ID dell'account di fatturazione dalle variabili d'ambiente
 const projectId = process.env.GOOGLE_PROJECT_ID;
@@ -17,82 +17,179 @@ exports.getProjectCosts = async (req, res) => {
       return res.status(401).json({ error: 'Non autorizzato' });
     }
     
-    // console.log('Richiesta dati di fatturazione per il progetto:', projectId);
-    // console.log('Account di fatturazione:', billingAccountId);
+    console.log('=== INIZIO DIAGNOSTICA COMPLETA CLOUD BILLING API ===');
+    console.log('ID progetto:', projectId);
+    console.log('ID account di fatturazione:', billingAccountId);
+    console.log('Percorso credenziali:', billingCredentialsPath);
+    
+    // Verifica esistenza file credenziali
+    try {
+      const credentialsExist = fs.existsSync(billingCredentialsPath);
+      console.log('File credenziali esiste:', credentialsExist);
+      
+      if (credentialsExist) {
+        const stats = fs.statSync(billingCredentialsPath);
+        console.log('Dimensione file credenziali:', stats.size, 'bytes');
+        
+        // Leggi il contenuto del file per verificare che sia un JSON valido (solo i primi 100 caratteri per sicurezza)
+        const fileContent = fs.readFileSync(billingCredentialsPath, 'utf8');
+        const isValidJSON = (() => {
+          try {
+            JSON.parse(fileContent);
+            return true;
+          } catch (e) {
+            return false;
+          }
+        })();
+        console.log('File credenziali è JSON valido:', isValidJSON);
+        console.log('Preview contenuto (primi 100 caratteri):', fileContent.substring(0, 100) + '...');
+      }
+    } catch (fsError) {
+      console.error('Errore nell\'accesso al file delle credenziali:', fsError.message);
+    }
     
     // Crea un client per Cloud Billing con le credenziali specifiche
+    console.log('Creazione client Cloud Billing...');
     const billingClient = new CloudBillingClient({
       keyFilename: billingCredentialsPath
     });
+    console.log('Client Cloud Billing creato con successo');
     
-    // console.log('Client Cloud Billing creato con credenziali da:', billingCredentialsPath);
+    // Tenta di ottenere informazioni sull'account di fatturazione con diverse varianti del formato
+    // per vedere quale funziona
+    let billingInfo = null;
+    let successFormat = '';
     
-    // Ottieni informazioni sull'account di fatturazione
-    const billingName = `billingAccounts/${billingAccountId}`;
-    // console.log('Recupero informazioni per:', billingName);
-    
-    let billingInfo;
-    try {
-      [billingInfo] = await billingClient.getBillingAccount({
-        name: billingName
-      });
-    //   console.log('Informazioni fatturazione recuperate:', billingInfo.name);
-    } catch (err) {
-    //   console.error('Errore nel recupero delle informazioni di fatturazione:', err);
-      return res.status(500).json({
-        error: 'Errore nel recupero delle informazioni di fatturazione',
-        details: err.message
-      });
-    }
-    
-    // Calcola le informazioni di utilizzo basate sui dati disponibili
-    const remainingCredits = 286.00; // In un'implementazione completa, questo valore dovrebbe essere ottenuto dall'API
-    const remainingDays = 86; // In un'implementazione completa, questo valore dovrebbe essere ottenuto dall'API
-    
-    // Simula i dati di utilizzo per servizio (in una versione completa, questi dati verrebbero da BigQuery)
-    const serviceBreakdown = [
-      {
-        service: 'Cloud Speech-to-Text',
-        cost: 0.012,
-        credits: -0.012,
-        percentage: 60
-      },
-      {
-        service: 'Vertex AI (Gemini)',
-        cost: 0.006,
-        credits: -0.006,
-        percentage: 30
-      },
-      {
-        service: 'Cloud Storage',
-        cost: 0.002,
-        credits: -0.002,
-        percentage: 10
-      }
+    const formats = [
+      `billingAccounts/${billingAccountId}`,
+      billingAccountId,
+      `projects/${projectId}/billingInfo`
     ];
     
-    // Calcola i totali
-    const totalCost = serviceBreakdown.reduce((sum, row) => sum + row.cost, 0);
-    const totalCredits = serviceBreakdown.reduce((sum, row) => sum + row.credits, 0);
-    const netCost = totalCost + totalCredits; // I crediti sono negativi
+    console.log('Tentativo con diversi formati dell\'ID account di fatturazione...');
     
-    // Restituisci i dati al frontend
-    res.json({
-      totalCost,
-      totalCredits,
-      netCost,
-      remainingCredits,
-      remainingDays,
-      serviceBreakdown,
-      projectId,
-      billingAccountId: billingInfo.name.replace('billingAccounts/', '')
-    });
+    // Prova ciascun formato
+    for (const format of formats) {
+      try {
+        console.log(`Prova formato: ${format}`);
+        const [info] = await billingClient.getBillingAccount({
+          name: format
+        });
+        
+        billingInfo = info;
+        successFormat = format;
+        console.log(`Successo con formato: ${format}`);
+        console.log('Info ricevute:', JSON.stringify(info, null, 2));
+        break;
+      } catch (formatError) {
+        console.error(`Errore con formato ${format}:`, formatError.message);
+      }
+    }
+    
+    // Se nessun formato ha funzionato, prova a usare getProjectBillingInfo invece
+    if (!billingInfo) {
+      try {
+        console.log('Tentativo con getProjectBillingInfo...');
+        const [projectBillingInfo] = await billingClient.getProjectBillingInfo({
+          name: `projects/${projectId}`
+        });
+        
+        console.log('getProjectBillingInfo ha funzionato:', JSON.stringify(projectBillingInfo, null, 2));
+        
+        // Prova a recuperare il billing account usando l'ID ottenuto dal projectBillingInfo
+        if (projectBillingInfo && projectBillingInfo.billingAccountName) {
+          try {
+            const [info] = await billingClient.getBillingAccount({
+              name: projectBillingInfo.billingAccountName
+            });
+            
+            billingInfo = info;
+            successFormat = projectBillingInfo.billingAccountName;
+            console.log(`Successo con formato: ${projectBillingInfo.billingAccountName}`);
+          } catch (secondaryError) {
+            console.error('Errore getBillingAccount con ID da projectBillingInfo:', secondaryError.message);
+          }
+        }
+      } catch (projectError) {
+        console.error('Errore getProjectBillingInfo:', projectError.message);
+      }
+    }
+    
+    // Prepara i dati di risposta
+    if (billingInfo) {
+      console.log('Generazione risposta con dati dell\'account recuperati');
+      
+      // Prova a leggere i crediti dall'account, se disponibili
+      let remainingCredits = null;
+      let remainingDays = null;
+      
+      if (billingInfo.trialInfo) {
+        console.log('Informazioni di prova trovate:', billingInfo.trialInfo);
+        if (billingInfo.trialInfo.creditsRemaining) {
+          remainingCredits = parseFloat(billingInfo.trialInfo.creditsRemaining);
+        }
+        
+        if (billingInfo.trialInfo.endTime) {
+          const endTime = new Date(billingInfo.trialInfo.endTime);
+          const now = new Date();
+          const diffTime = Math.abs(endTime - now);
+          remainingDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        }
+      }
+      
+      // Nota: questi dati dovrebbero essere richiesti all'API reale di Google Cloud Billing
+      // Al momento non possiamo utilizzare valori hardcoded
+      const serviceBreakdown = [];
+      
+      // Calcoli basati sui dati reali
+      const totalCost = null;
+      const totalCredits = null;
+      const netCost = null;
+      
+      const responseData = {
+        totalCost,
+        totalCredits,
+        netCost,
+        remainingCredits,
+        remainingDays,
+        serviceBreakdown,
+        projectId,
+        billingAccountId: billingInfo.name.replace('billingAccounts/', ''),
+        debug: {
+          successFormat,
+          billingInfoName: billingInfo.name,
+          displayName: billingInfo.displayName
+        }
+      };
+      
+      console.log('Risposta preparata con successo');
+      console.log('=== FINE DIAGNOSTICA (SUCCESSO) ===');
+      
+      res.json(responseData);
+    } else {
+      throw new Error('Impossibile recuperare le informazioni dell\'account di fatturazione con nessun formato');
+    }
     
   } catch (error) {
-    // console.error('Errore nel recupero dei dati di fatturazione:', error);
-    res.status(500).json({ 
+    console.error('=== ERRORE FATALE ===');
+    console.error('Messaggio:', error.message);
+    console.error('Stack:', error.stack);
+    
+    const errorResponse = { 
       error: 'Errore nel recupero dei dati di fatturazione',
-      details: error.message
-    });
+      details: error.message,
+      stack: error.stack,
+      suggestions: [
+        "Verifica che l'ID dell'account di fatturazione sia corretto",
+        "Controlla che le credenziali abbiano i ruoli 'Billing Account Viewer' e 'Billing Account Administrator'",
+        "Assicurati che l'API Cloud Billing sia abilitata nel progetto",
+        "Verifica che il file delle credenziali sia accessibile e contenga dati validi"
+      ]
+    };
+    
+    console.log('Risposta di errore:', JSON.stringify(errorResponse, null, 2));
+    console.log('=== FINE DIAGNOSTICA (ERRORE) ===');
+    
+    res.status(500).json(errorResponse);
   }
 }; 
