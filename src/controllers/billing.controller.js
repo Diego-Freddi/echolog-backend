@@ -1,194 +1,89 @@
-const { CloudBillingClient } = require('@google-cloud/billing');
-const path = require('path');
-const fs = require('fs');
+require('dotenv').config();
+const { BigQuery } = require('@google-cloud/bigquery');
 
-// Ottieni l'ID del progetto Google Cloud e l'ID dell'account di fatturazione dalle variabili d'ambiente
-const projectId = process.env.GOOGLE_PROJECT_ID;
-const billingAccountId = process.env.GOOGLE_CLOUD_BILLING_ACCOUNT_ID;
+const bigquery = new BigQuery({
+  keyFilename: process.env.GOOGLE_BILLING_CREDENTIALS,
+});
 
-// Configura il client per l'API Cloud Billing con le credenziali specifiche
-const billingCredentialsPath = path.join(__dirname, '../../', process.env.GOOGLE_BILLING_CREDENTIALS);
+const CREDIT_INITIAL = 286.00;
+const END_DATE = new Date('2025-06-28');
 
-// Recupera i costi attuali del progetto
 exports.getProjectCosts = async (req, res) => {
   try {
     // Verifica autenticazione
     if (!req.user) {
       return res.status(401).json({ error: 'Non autorizzato' });
     }
-    
-    console.log('=== INIZIO DIAGNOSTICA COMPLETA CLOUD BILLING API ===');
-    console.log('ID progetto:', projectId);
-    console.log('ID account di fatturazione:', billingAccountId);
-    console.log('Percorso credenziali:', billingCredentialsPath);
-    
-    // Verifica esistenza file credenziali
-    try {
-      const credentialsExist = fs.existsSync(billingCredentialsPath);
-      console.log('File credenziali esiste:', credentialsExist);
-      
-      if (credentialsExist) {
-        const stats = fs.statSync(billingCredentialsPath);
-        console.log('Dimensione file credenziali:', stats.size, 'bytes');
-        
-        // Leggi il contenuto del file per verificare che sia un JSON valido (solo i primi 100 caratteri per sicurezza)
-        const fileContent = fs.readFileSync(billingCredentialsPath, 'utf8');
-        const isValidJSON = (() => {
-          try {
-            JSON.parse(fileContent);
-            return true;
-          } catch (e) {
-            return false;
-          }
-        })();
-        console.log('File credenziali è JSON valido:', isValidJSON);
-        console.log('Preview contenuto (primi 100 caratteri):', fileContent.substring(0, 100) + '...');
-      }
-    } catch (fsError) {
-      console.error('Errore nell\'accesso al file delle credenziali:', fsError.message);
-    }
-    
-    // Crea un client per Cloud Billing con le credenziali specifiche
-    console.log('Creazione client Cloud Billing...');
-    const billingClient = new CloudBillingClient({
-      keyFilename: billingCredentialsPath
-    });
-    console.log('Client Cloud Billing creato con successo');
-    
-    // Tenta di ottenere informazioni sull'account di fatturazione con diverse varianti del formato
-    // per vedere quale funziona
-    let billingInfo = null;
-    let successFormat = '';
-    
-    const formats = [
-      `billingAccounts/${billingAccountId}`,
-      billingAccountId,
-      `projects/${projectId}/billingInfo`
-    ];
-    
-    console.log('Tentativo con diversi formati dell\'ID account di fatturazione...');
-    
-    // Prova ciascun formato
-    for (const format of formats) {
-      try {
-        console.log(`Prova formato: ${format}`);
-        const [info] = await billingClient.getBillingAccount({
-          name: format
-        });
-        
-        billingInfo = info;
-        successFormat = format;
-        console.log(`Successo con formato: ${format}`);
-        console.log('Info ricevute:', JSON.stringify(info, null, 2));
-        break;
-      } catch (formatError) {
-        console.error(`Errore con formato ${format}:`, formatError.message);
-      }
-    }
-    
-    // Se nessun formato ha funzionato, prova a usare getProjectBillingInfo invece
-    if (!billingInfo) {
-      try {
-        console.log('Tentativo con getProjectBillingInfo...');
-        const [projectBillingInfo] = await billingClient.getProjectBillingInfo({
-          name: `projects/${projectId}`
-        });
-        
-        console.log('getProjectBillingInfo ha funzionato:', JSON.stringify(projectBillingInfo, null, 2));
-        
-        // Prova a recuperare il billing account usando l'ID ottenuto dal projectBillingInfo
-        if (projectBillingInfo && projectBillingInfo.billingAccountName) {
-          try {
-            const [info] = await billingClient.getBillingAccount({
-              name: projectBillingInfo.billingAccountName
-            });
-            
-            billingInfo = info;
-            successFormat = projectBillingInfo.billingAccountName;
-            console.log(`Successo con formato: ${projectBillingInfo.billingAccountName}`);
-          } catch (secondaryError) {
-            console.error('Errore getBillingAccount con ID da projectBillingInfo:', secondaryError.message);
-          }
-        }
-      } catch (projectError) {
-        console.error('Errore getProjectBillingInfo:', projectError.message);
-      }
-    }
-    
-    // Prepara i dati di risposta
-    if (billingInfo) {
-      console.log('Generazione risposta con dati dell\'account recuperati');
-      
-      // Prova a leggere i crediti dall'account, se disponibili
-      let remainingCredits = null;
-      let remainingDays = null;
-      
-      if (billingInfo.trialInfo) {
-        console.log('Informazioni di prova trovate:', billingInfo.trialInfo);
-        if (billingInfo.trialInfo.creditsRemaining) {
-          remainingCredits = parseFloat(billingInfo.trialInfo.creditsRemaining);
-        }
-        
-        if (billingInfo.trialInfo.endTime) {
-          const endTime = new Date(billingInfo.trialInfo.endTime);
-          const now = new Date();
-          const diffTime = Math.abs(endTime - now);
-          remainingDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        }
-      }
-      
-      // Nota: questi dati dovrebbero essere richiesti all'API reale di Google Cloud Billing
-      // Al momento non possiamo utilizzare valori hardcoded
-      const serviceBreakdown = [];
-      
-      // Calcoli basati sui dati reali
-      const totalCost = null;
-      const totalCredits = null;
-      const netCost = null;
-      
-      const responseData = {
-        totalCost,
-        totalCredits,
-        netCost,
-        remainingCredits,
-        remainingDays,
-        serviceBreakdown,
-        projectId,
-        billingAccountId: billingInfo.name.replace('billingAccounts/', ''),
-        debug: {
-          successFormat,
-          billingInfoName: billingInfo.name,
-          displayName: billingInfo.displayName
-        }
+
+    // Query per aggregare costi e crediti per servizio
+    const query = `
+      SELECT
+        service.description,
+        SUM(cost) AS cost_total,
+        SUM(IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c), 0)) AS credits_used
+      FROM \`${process.env.GOOGLE_PROJECT_ID}.echolog_billing_export.gcp_billing_export_resource_v1_${process.env.GOOGLE_CLOUD_BILLING_ACCOUNT_ID.replace(/-/g, '_')}\`
+      WHERE usage_start_time IS NOT NULL
+      GROUP BY service.description
+    `;
+    // console.log('🟢 QUERY DEFINITIVA ESEGUITA:\n', query);
+
+    const [job] = await bigquery.createQueryJob({ query });
+    const [rows] = await job.getQueryResults();
+
+    let cost_total = 0;
+    let credits_used = 0;
+
+    const serviceBreakdown = rows.map(row => {
+      const serviceCost = parseFloat(row.cost_total) || 0;
+      const serviceCredits = parseFloat(row.credits_used) || 0;
+      cost_total += serviceCost;
+      credits_used += serviceCredits;
+
+      return {
+        service: row.service || 'Servizio sconosciuto',
+        cost: Number(serviceCost.toFixed(2)),
+        credits: Number(serviceCredits.toFixed(2)),
+        netCost: Number((serviceCost - serviceCredits).toFixed(2)),
       };
-      
-      console.log('Risposta preparata con successo');
-      console.log('=== FINE DIAGNOSTICA (SUCCESSO) ===');
-      
-      res.json(responseData);
-    } else {
-      throw new Error('Impossibile recuperare le informazioni dell\'account di fatturazione con nessun formato');
+    });
+
+    // Aggiungiamo le percentuali dopo aver calcolato il costo totale
+    if (cost_total > 0) {
+      serviceBreakdown.forEach(service => {
+        service.percentage = Math.round((service.cost / cost_total) * 100) || 0;
+      });
     }
-    
+
+    const net_cost = cost_total - credits_used;
+    const today = new Date();
+    const days_remaining = Math.max(0, Math.floor((END_DATE - today) / (1000 * 60 * 60 * 24)));
+    const credit_remaining = Math.max(0, CREDIT_INITIAL - cost_total);
+
+    res.json({
+      projectId: process.env.GOOGLE_PROJECT_ID,
+      billingAccountId: process.env.GOOGLE_CLOUD_BILLING_ACCOUNT_ID,
+      totalCost: Number(cost_total.toFixed(2)),
+      totalCredits: Number(Math.abs(credits_used).toFixed(2)), // I crediti sono spesso negativi, prendiamo il valore assoluto
+      netCost: Number(net_cost.toFixed(2)),
+      remainingDays: days_remaining,
+      remainingCredits: Number(credit_remaining.toFixed(2)),
+      serviceBreakdown,
+    });
   } catch (error) {
-    console.error('=== ERRORE FATALE ===');
-    console.error('Messaggio:', error.message);
-    console.error('Stack:', error.stack);
+    console.error("❌ Errore nel recupero dei dati di fatturazione:", error);
     
+    // Dettagli maggiori dell'errore per il debugging
     const errorResponse = { 
       error: 'Errore nel recupero dei dati di fatturazione',
       details: error.message,
       stack: error.stack,
       suggestions: [
-        "Verifica che l'ID dell'account di fatturazione sia corretto",
-        "Controlla che le credenziali abbiano i ruoli 'Billing Account Viewer' e 'Billing Account Administrator'",
-        "Assicurati che l'API Cloud Billing sia abilitata nel progetto",
-        "Verifica che il file delle credenziali sia accessibile e contenga dati validi"
+        "Verifica che l'ID del progetto e dell'account di fatturazione siano corretti",
+        "Controlla che le credenziali abbiano i ruoli per accedere a BigQuery",
+        "Verifica che il dataset e la tabella di billing export esistano",
+        "Assicurati che il file delle credenziali sia accessibile"
       ]
     };
-    
-    console.log('Risposta di errore:', JSON.stringify(errorResponse, null, 2));
-    console.log('=== FINE DIAGNOSTICA (ERRORE) ===');
     
     res.status(500).json(errorResponse);
   }
