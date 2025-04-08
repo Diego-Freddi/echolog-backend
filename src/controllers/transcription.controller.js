@@ -2,7 +2,6 @@ const speech = require('@google-cloud/speech');
 const path = require('path');
 const fs = require('fs');
 const storageConfig = require('../config/storage.config');
-const { v4: uuidv4 } = require('uuid');
 const Recording = require('../models/recording.model');
 const Transcription = require('../models/transcription.model');
 const Analysis = require('../models/analysis.model');
