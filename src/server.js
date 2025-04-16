@@ -17,11 +17,16 @@ const app = express();
 
 // Configurazione CORS
 app.use(cors({
-  origin: process.env.FRONTEND_URL || ['http://localhost:3000', 'https://echolog.onrender.com'],
+  origin: [
+    'http://localhost:3000',
+    'https://echolog.onrender.com',
+    'https://echolog-frontend-theta.vercel.app'
+  ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
 }));
+
 
 app.use(express.json());
 
