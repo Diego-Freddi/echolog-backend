@@ -17,7 +17,7 @@ const client = new speech.SpeechClient();
  * @returns {Object} Configurazione per Speech-to-Text
  */
 const getTranscriptionConfig = (options = {}) => ({
-  encoding: options.encoding || 'LINEAR16',
+  encoding: options.encoding || 'MP3',
   sampleRateHertz: options.sampleRateHertz || 16000,
   languageCode: options.languageCode || 'it-IT', // Formato completo per Google Speech-to-Text (ISO 639-1 + paese)
   enableAutomaticPunctuation: true,
