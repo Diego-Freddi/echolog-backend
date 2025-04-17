@@ -211,9 +211,16 @@ const getAudio = async (req, res) => {
       console.log(`Recupero da GCS: ${gcsFilename}`);
       const fileContent = await storageConfig.getFromGCS(gcsFilename);
       
-      // Imposta gli header appropriati
+      // Imposta gli header CORS per permettere il download cross-origin
+      res.setHeader('Access-Control-Allow-Origin', 'https://echolog-frontend-theta.vercel.app');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      
+      // Imposta gli header appropriati per il file
       res.setHeader('Content-Type', 'audio/mpeg');
       res.setHeader('Content-Disposition', `attachment; filename="${downloadFilename}.mp3"`);
+      
       return res.send(fileContent);
     } catch (error) {
       console.error('Errore recupero da GCS:', error);
