@@ -74,7 +74,10 @@ app.use((err, req, res, next) => {
 
 // ✅ Avvio del server
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 Server in ascolto sulla porta ${PORT}`);
   console.log(`📦 Storage mode: ${storageConfig.useCloudStorage ? 'Google Cloud Storage' : 'Local Storage'}`);
 });
+
+// Aumenta il timeout del server
+server.timeout = 60000; // 60 secondi
