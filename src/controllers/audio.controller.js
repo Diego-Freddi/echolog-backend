@@ -212,10 +212,10 @@ const getAudio = async (req, res) => {
       const fileContent = await storageConfig.getFromGCS(gcsFilename);
       
       // Imposta gli header CORS per permettere il download cross-origin
-      res.setHeader('Access-Control-Allow-Origin', 'https://echolog-frontend-theta.vercel.app');
-      res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      // res.setHeader('Access-Control-Allow-Origin', 'https://echolog-frontend-theta.vercel.app');
+      // res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+      // res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      // res.setHeader('Access-Control-Allow-Credentials', 'true');
       
       // Imposta gli header appropriati per il file
       res.setHeader('Content-Type', 'audio/mpeg');

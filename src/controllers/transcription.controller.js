@@ -21,7 +21,7 @@ const getTranscriptionConfig = (options = {}) => ({
   sampleRateHertz: options.sampleRateHertz || 16000,
   languageCode: options.languageCode || 'it-IT', // Formato completo per Google Speech-to-Text (ISO 639-1 + paese)
   enableAutomaticPunctuation: true,
-  model: 'default', // Usiamo il modello default per ora
+  model: 'latest_long', 
   useEnhanced: true,
   enableWordTimeOffsets: true,
 });
