@@ -11,8 +11,8 @@ const vertexAI = new VertexAI({
 });
 
 // Ottieni il modello generativo Gemini
-const model = vertexAI.preview.getGenerativeModel({
-  model: process.env.GEMINI_MODEL || 'gemini-pro',
+const model = vertexAI.getGenerativeModel({
+  model: process.env.GEMINI_MODEL || 'gemini-2.0-flash-lite',
 });
 
 /**
